@@ -5,8 +5,14 @@ Notebooks used to train the ASD eye-tracking scanpath classifiers.
 ## Contents
 
 - `inceptionv3_original_97.ipynb` — InceptionV3 transfer-learning model (97% reported
-  accuracy), the model used in the submitted paper and currently deployed in the
-  [app](https://github.com/ASD-by-Eye-tracking-and-Deep-learning/app) prototype.
+  accuracy), the model discussed in the submitted paper.
+  **Note:** the model file actually deployed in
+  [app](https://github.com/ASD-by-Eye-tracking-and-Deep-learning/app)/core/best.h5
+  is a *different*, simpler custom CNN (3× Conv2D+MaxPool → Dense(256) →
+  Dropout → Dense(1, sigmoid), 256×256×3 input) — not InceptionV3. Confirmed by
+  inspecting the Keras `model_config` in `best.h5` directly (2026-09-27). The
+  relationship between this notebook and the deployed model is unclear and needs
+  checking.
 - `ghost/` — GhostNet-based experiments (MobileNetV4-small, ConvNeXt-tiny-v2).
 - `ghost+cbam/` — Same architectures with CBAM attention added.
 
