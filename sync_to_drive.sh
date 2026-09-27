@@ -5,7 +5,7 @@
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DRIVE_DIR="${1:-$HOME/GoogleDrive/Duc n Huyen/ASD/train/code}"
+DRIVE_DIR="${1:-$HOME/GoogleDrive/Duc n Huyen/ASD/ML4Autism/train/code}"
 
 mkdir -p "$DRIVE_DIR"
 

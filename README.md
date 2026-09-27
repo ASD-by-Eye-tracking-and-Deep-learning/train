@@ -87,8 +87,8 @@ uv run jupyter lab train_all.ipynb
 ```
 
 Or on Colab: run `sync_to_drive.sh` once to mirror this repo into
-`Duc n Huyen/ASD/train/code/`, then open `train_all.ipynb` from there — Drive
-also holds the dataset (`train/datasets/mahmoud-dataset/`) that the notebook
+`Duc n Huyen/ASD/ML4Autism/train/code/`, then open `train_all.ipynb` from there — Drive
+also holds the dataset (`ML4Autism/train/datasets/mahmoud-dataset/`) that the notebook
 mounts and reads from.
 
 ## Keeping Drive in sync
@@ -101,7 +101,7 @@ Local git is the source of truth. After changing anything under `src/` or
 ```
 
 This one-way rsyncs code (never weights, never the dataset) into
-`Duc n Huyen/ASD/train/code/`. Drive is not edited directly and nothing syncs
+`Duc n Huyen/ASD/ML4Autism/train/code/`. Drive is not edited directly and nothing syncs
 back from it — if you need to change training code, do it here and re-run
 the script.
 
