@@ -6,12 +6,40 @@ changing the split would change results.
 """
 from __future__ import annotations
 
+import re
 from collections import Counter
 from dataclasses import dataclass
+from pathlib import Path
 
 import torch
 from sklearn.model_selection import train_test_split
 from torchvision import datasets, transforms
+
+_FILENAME_PARTICIPANT_PATTERN = re.compile(r"^(?:TS|TC)\d+_(\d+)\.(?:png|jpg|jpeg)$", re.IGNORECASE)
+
+
+def get_participant_groups(dataset: datasets.ImageFolder) -> list[int]:
+    """Participant ID per sample, in the same order as ``dataset.samples`` —
+    i.e. aligned with the indices used by ``load_torch_dataset``'s stratified
+    split today, and with what ``GroupShuffleSplit``/``StratifiedGroupKFold``
+    need as their ``groups`` array once the split is made subject-independent.
+
+    Filenames follow ``Class_ParticipantID`` (e.g. ``TS001_11.png`` ->
+    participant 11), per ``mahmoud-dataset/ReadMe.txt``. Verified against
+    ``Metadata_Participants.csv`` for all 547 images: parses cleanly, class
+    (ASD/TD) always agrees with the CSV once IDs are compared as ints (the
+    CSV doesn't zero-pad, filenames do), and no participant's images appear
+    under both class folders. Parsed from the filename rather than joined
+    against the CSV, since the CSV isn't needed for grouping and 5 of its 59
+    participants have no images at all.
+    """
+    groups = []
+    for path, _ in dataset.samples:
+        match = _FILENAME_PARTICIPANT_PATTERN.match(Path(path).name)
+        if not match:
+            raise ValueError(f"Filename doesn't match Class_ParticipantID pattern: {path}")
+        groups.append(int(match.group(1)))
+    return groups
 
 
 @dataclass

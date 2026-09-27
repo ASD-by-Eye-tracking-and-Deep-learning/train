@@ -17,6 +17,7 @@ rsync -av --delete \
   --exclude '*.pth' \
   --exclude '*.h5' \
   --exclude 'artifacts/' \
+  --exclude 'datasets/' \
   --exclude 'uv.lock' \
   "$REPO_DIR/" "$DRIVE_DIR/"
 
