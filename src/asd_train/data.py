@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Sequence
 
 import torch
-from sklearn.model_selection import GroupShuffleSplit
+from sklearn.model_selection import GroupShuffleSplit, StratifiedGroupKFold
 from torchvision import datasets, transforms
 
 _FILENAME_PARTICIPANT_PATTERN = re.compile(r"^(?:TS|TC)\d+_(\d+)\.(?:png|jpg|jpeg)$", re.IGNORECASE)
@@ -79,6 +79,44 @@ def split_participant_groups(
     return list(train_idx), val_idx, test_idx
 
 
+def make_group_kfold_splits(
+    dataset: datasets.ImageFolder,
+    k: int = 5,
+    val_size: float = 0.2,
+    random_state: int = 42,
+) -> list[tuple[list[int], list[int], list[int]]]:
+    """Grouped k-fold CV splits (T6) — the primary evaluation protocol per
+    Decision #6/#7 (`record.md`): k=5, since only 54 participants have images
+    (k=10 would give ~5.4/fold, too few to stratify by class reliably).
+
+    Outer ``StratifiedGroupKFold`` gives k (train_pool, test) pairs where
+    every participant lands in exactly one fold's test set across the whole
+    partition (unlike k independent ``GroupShuffleSplit`` hold-outs). Each
+    fold's train pool is then further carved via ``GroupShuffleSplit`` into
+    train/val (the per-epoch training loop still needs a val split for early
+    stopping). Returns k ``(train_idx, val_idx, test_idx)`` triples — same
+    shape as ``split_participant_groups``'s single triple, so callers build
+    loaders identically either way.
+    """
+    groups = get_participant_groups(dataset)
+    targets = [label for _, label in dataset.samples]
+    n = len(dataset)
+
+    outer = StratifiedGroupKFold(n_splits=k, shuffle=True, random_state=random_state)
+
+    splits = []
+    for train_pool_idx, test_idx in outer.split(range(n), targets, groups):
+        pool_groups = [groups[i] for i in train_pool_idx]
+        inner = GroupShuffleSplit(n_splits=1, test_size=val_size, random_state=random_state)
+        train_local, val_local = next(inner.split(range(len(train_pool_idx)), groups=pool_groups))
+
+        train_idx = [train_pool_idx[i] for i in train_local]
+        val_idx = [train_pool_idx[i] for i in val_local]
+        splits.append((train_idx, val_idx, list(test_idx)))
+
+    return splits
+
+
 @dataclass
 class TorchDataBundle:
     dataset: datasets.ImageFolder
@@ -88,6 +126,58 @@ class TorchDataBundle:
     train_idx: list
     val_idx: list
     test_idx: list
+
+
+def bundle_from_indices(
+    dataset: datasets.ImageFolder,
+    batch_size: int,
+    train_idx: list[int],
+    val_idx: list[int],
+    test_idx: list[int],
+) -> TorchDataBundle:
+    """Wrap pre-computed train/val/test indices into samplers + DataLoaders.
+    Shared by the T5 single-split path (``load_torch_dataset``) and the T6
+    CV path (``run_torch_cv_experiment``), which differ only in how the
+    indices were computed, not in how loaders get built from them."""
+    train_sampler = torch.utils.data.SubsetRandomSampler(train_idx)
+    val_sampler = torch.utils.data.SubsetRandomSampler(val_idx)
+    test_sampler = torch.utils.data.SubsetRandomSampler(test_idx)
+
+    # drop_last on the train loader only: BatchNorm (in train mode) errors on a
+    # batch of size 1, which a partial final batch can produce (e.g. seen with
+    # T6's smaller per-fold train sets: 225 images % batch_size=32 == 1). Guard
+    # against dropping ALL batches on a pathologically small train split.
+    train_drop_last = len(train_idx) > batch_size
+
+    return TorchDataBundle(
+        dataset=dataset,
+        train_loader=torch.utils.data.DataLoader(
+            dataset, batch_size=batch_size, sampler=train_sampler, drop_last=train_drop_last
+        ),
+        val_loader=torch.utils.data.DataLoader(dataset, batch_size=batch_size, sampler=val_sampler),
+        test_loader=torch.utils.data.DataLoader(dataset, batch_size=batch_size, sampler=test_sampler),
+        train_idx=list(train_idx),
+        val_idx=list(val_idx),
+        test_idx=list(test_idx),
+    )
+
+
+def build_torch_transform(img_size: int, extra_transform_augmentation: bool) -> transforms.Compose:
+    """``extra_transform_augmentation``: only ``ghost/mobilenetv4_small`` added
+    RandomHorizontalFlip/RandomRotation/ColorJitter directly in the
+    torchvision transform, *on top of* the separate ``augment_pre_fmmix1``
+    step applied later in the training loop — the other 3 notebooks didn't.
+    This looks like an inconsistency in the original work, not a deliberate
+    choice, but is preserved here rather than silently "fixed"."""
+    transform_steps = [transforms.Resize((img_size, img_size))]
+    if extra_transform_augmentation:
+        transform_steps += [
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.RandomRotation(15),
+            transforms.ColorJitter(brightness=0.2, contrast=0.2),
+        ]
+    transform_steps.append(transforms.ToTensor())
+    return transforms.Compose(transform_steps)
 
 
 def load_torch_dataset(
@@ -101,41 +191,12 @@ def load_torch_dataset(
     participant's images appear in more than one of train/val/test. Same
     ~70/18.45/11.55% ratios all 4 Ghost/CBAM notebooks originally used, now
     grouped by participant instead of stratified by class/image.
-
-    ``extra_transform_augmentation``: only ``ghost/mobilenetv4_small`` added
-    RandomHorizontalFlip/RandomRotation/ColorJitter directly in the
-    torchvision transform, *on top of* the separate ``augment_pre_fmmix1``
-    step applied later in the training loop — the other 3 notebooks didn't.
-    This looks like an inconsistency in the original work, not a deliberate
-    choice, but is preserved here rather than silently "fixed".
     """
-    transform_steps = [transforms.Resize((img_size, img_size))]
-    if extra_transform_augmentation:
-        transform_steps += [
-            transforms.RandomHorizontalFlip(p=0.5),
-            transforms.RandomRotation(15),
-            transforms.ColorJitter(brightness=0.2, contrast=0.2),
-        ]
-    transform_steps.append(transforms.ToTensor())
-    transform = transforms.Compose(transform_steps)
-
+    transform = build_torch_transform(img_size, extra_transform_augmentation)
     dataset = datasets.ImageFolder(dataset_path, transform=transform)
     groups = get_participant_groups(dataset)
     train_idx, val_idx, test_idx = split_participant_groups(groups, random_state=random_state)
-
-    train_sampler = torch.utils.data.SubsetRandomSampler(train_idx)
-    val_sampler = torch.utils.data.SubsetRandomSampler(val_idx)
-    test_sampler = torch.utils.data.SubsetRandomSampler(test_idx)
-
-    return TorchDataBundle(
-        dataset=dataset,
-        train_loader=torch.utils.data.DataLoader(dataset, batch_size=batch_size, sampler=train_sampler),
-        val_loader=torch.utils.data.DataLoader(dataset, batch_size=batch_size, sampler=val_sampler),
-        test_loader=torch.utils.data.DataLoader(dataset, batch_size=batch_size, sampler=test_sampler),
-        train_idx=list(train_idx),
-        val_idx=list(val_idx),
-        test_idx=list(test_idx),
-    )
+    return bundle_from_indices(dataset, batch_size, train_idx, val_idx, test_idx)
 
 
 def class_counts(indices, dataset) -> Counter:

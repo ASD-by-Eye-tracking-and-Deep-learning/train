@@ -6,9 +6,10 @@ exactly; everything that varied between them is read off ``cfg``.
 """
 from __future__ import annotations
 
+import json
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 import numpy as np
 import torch
@@ -17,8 +18,10 @@ from sklearn.metrics import classification_report, confusion_matrix, precision_s
 
 from asd_train.augmentation import FMMixArgs, augment_pre_fmmix1, fmmix1
 from asd_train.configs import GhostRunConfig
-from asd_train.data import load_torch_dataset
+from asd_train.data import TorchDataBundle, bundle_from_indices, build_torch_transform, load_torch_dataset, make_group_kfold_splits
+from asd_train.metrics import mean_ci
 from asd_train.models.ghost_variants import GhostVariantModel
+from torchvision import datasets
 
 
 @dataclass
@@ -31,6 +34,18 @@ class TorchRunResult:
     classification_report: str
     confusion_matrix: np.ndarray
     best_model_path: str
+
+
+@dataclass
+class TorchCVResult:
+    config_name: str
+    fold_results: list[TorchRunResult]
+    mean_accuracy: float
+    ci_accuracy: tuple[float, float]
+    mean_precision: float
+    ci_precision: tuple[float, float]
+    mean_recall: float
+    ci_recall: tuple[float, float]
 
 
 def _make_scheduler(cfg: GhostRunConfig, optimizer):
@@ -51,6 +66,9 @@ def run_torch_experiment(
     output_dir: str,
     device: torch.device | None = None,
 ) -> TorchRunResult:
+    """Single subject-independent hold-out (T5) — quick dev iteration on one
+    config. For the primary reported protocol, see ``run_torch_cv_experiment``
+    (T6, grouped k-fold CV)."""
     device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
     dataset_path = os.path.join(dataset_root, os.path.basename(cfg.dataset_path.rstrip("/")))
     os.makedirs(output_dir, exist_ok=True)
@@ -63,6 +81,20 @@ def run_torch_experiment(
         extra_transform_augmentation=cfg.extra_transform_augmentation,
     )
 
+    return _train_and_evaluate(cfg, bundle, device, best_model_path)
+
+
+def _train_and_evaluate(
+    cfg: GhostRunConfig,
+    bundle: TorchDataBundle,
+    device: torch.device,
+    best_model_path: str,
+) -> TorchRunResult:
+    """Model build + full training loop (phase schedule, FMMix1, early
+    stopping on val_loss) + final test-set evaluation, given an
+    already-built ``TorchDataBundle``. Extracted from ``run_torch_experiment``
+    (T6) so both the single-split path and ``run_torch_cv_experiment``'s
+    per-fold loop share the exact same training/eval code."""
     model = GhostVariantModel(
         backbone_name=cfg.backbone_name,
         variant=cfg.variant,
@@ -186,4 +218,70 @@ def run_torch_experiment(
         classification_report=report,
         confusion_matrix=conf_mat,
         best_model_path=best_model_path,
+    )
+
+
+def _fold_result_to_json(result: TorchRunResult) -> dict:
+    d = asdict(result)
+    d["confusion_matrix"] = result.confusion_matrix.tolist()
+    return d
+
+
+def _save_cv_progress(config_name: str, fold_results: list[TorchRunResult], output_dir: str) -> None:
+    path = os.path.join(output_dir, f"{config_name}_cv.json")
+    with open(path, "w") as f:
+        json.dump({"config_name": config_name, "folds": [_fold_result_to_json(r) for r in fold_results]}, f, indent=2)
+
+
+def run_torch_cv_experiment(
+    cfg: GhostRunConfig,
+    dataset_root: str,
+    output_dir: str,
+    k: int = 5,
+    val_size: float = 0.2,
+    random_state: int = 42,
+    device: torch.device | None = None,
+) -> TorchCVResult:
+    """Grouped k-fold CV (T6) — the primary reported protocol (Decision #6/#7,
+    record.md): k=5, subject-independent per fold, every participant used as
+    test exactly once across the k folds. Each fold trains and evaluates
+    independently via ``_train_and_evaluate`` (same code path as
+    ``run_torch_experiment``'s single hold-out). Results are written to
+    ``{output_dir}/{cfg.name}_cv.json`` after every fold, not just at the end,
+    so a crash partway through doesn't lose already-finished folds.
+    """
+    device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    dataset_path = os.path.join(dataset_root, os.path.basename(cfg.dataset_path.rstrip("/")))
+    os.makedirs(output_dir, exist_ok=True)
+
+    transform = build_torch_transform(cfg.img_size, cfg.extra_transform_augmentation)
+    dataset = datasets.ImageFolder(dataset_path, transform=transform)
+    splits = make_group_kfold_splits(dataset, k=k, val_size=val_size, random_state=random_state)
+
+    fold_results: list[TorchRunResult] = []
+    for fold_i, (train_idx, val_idx, test_idx) in enumerate(splits):
+        print(f"\n{'=' * 20} {cfg.name} — fold {fold_i + 1}/{k} {'=' * 20}")
+        bundle = bundle_from_indices(dataset, cfg.batch_size, train_idx, val_idx, test_idx)
+        best_model_path = os.path.join(output_dir, f"{cfg.name}_fold{fold_i}.pth")
+        result = _train_and_evaluate(cfg, bundle, device, best_model_path)
+        fold_results.append(result)
+        _save_cv_progress(cfg.name, fold_results, output_dir)
+
+    mean_accuracy, ci_accuracy = mean_ci([r.test_accuracy for r in fold_results])
+    mean_precision, ci_precision = mean_ci([r.test_precision for r in fold_results])
+    mean_recall, ci_recall = mean_ci([r.test_recall for r in fold_results])
+
+    print(f"\n[{cfg.name}] CV accuracy:  {mean_accuracy:.4f} (95% CI {ci_accuracy[0]:.4f}-{ci_accuracy[1]:.4f})")
+    print(f"[{cfg.name}] CV precision: {mean_precision:.4f} (95% CI {ci_precision[0]:.4f}-{ci_precision[1]:.4f})")
+    print(f"[{cfg.name}] CV recall:    {mean_recall:.4f} (95% CI {ci_recall[0]:.4f}-{ci_recall[1]:.4f})")
+
+    return TorchCVResult(
+        config_name=cfg.name,
+        fold_results=fold_results,
+        mean_accuracy=mean_accuracy,
+        ci_accuracy=ci_accuracy,
+        mean_precision=mean_precision,
+        ci_precision=ci_precision,
+        mean_recall=mean_recall,
+        ci_recall=ci_recall,
     )
