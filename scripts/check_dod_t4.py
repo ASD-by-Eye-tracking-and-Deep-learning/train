@@ -6,9 +6,10 @@ images, no participant's images split across both class folders).
 """
 from torchvision import datasets, transforms
 
+from asd_train.configs import DATASET_PATH_DEFAULT
 from asd_train.data import get_participant_groups
 
-dataset = datasets.ImageFolder("datasets/mahmoud-dataset/Images", transform=transforms.ToTensor())
+dataset = datasets.ImageFolder(DATASET_PATH_DEFAULT, transform=transforms.ToTensor())
 groups = get_participant_groups(dataset)
 
 assert len(groups) == len(dataset) == 547, f"expected 547 samples/groups, got {len(dataset)}/{len(groups)}"

@@ -86,6 +86,12 @@ uv sync                      # installs torch, tensorflow, timm, etc.
 uv run jupyter lab train_all.ipynb
 ```
 
+Locally, the dataset is expected at `../data/mahmoud-dataset/` — i.e. `data/`
+next to this `train/` checkout, inside the `ASD/` meta-repo, not inside
+`train/` itself. It's gitignored there too (too large for git); see
+`ASD/.agents/record.md` for how to populate it (a local copy pulled via
+`rclone copy` from Drive, not the slow FUSE mount).
+
 Or on Colab: run `sync_to_drive.sh` once to mirror this repo into
 `Duc n Huyen/ASD/ML4Autism/train/code/`, then open `train_all.ipynb` from there — Drive
 also holds the dataset (`ML4Autism/train/datasets/mahmoud-dataset/`) that the notebook
