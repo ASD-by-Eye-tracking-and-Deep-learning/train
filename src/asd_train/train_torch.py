@@ -19,7 +19,7 @@ from sklearn.metrics import classification_report, confusion_matrix, precision_s
 from asd_train.augmentation import FMMixArgs, augment_pre_fmmix1, fmmix1
 from asd_train.configs import GhostRunConfig
 from asd_train.data import TorchDataBundle, bundle_from_indices, build_torch_transform, load_torch_dataset, make_group_kfold_splits
-from asd_train.metrics import mean_ci
+from asd_train.metrics import ASD_LABEL, ClinicalMetrics, compute_clinical_metrics, mean_ci
 from asd_train.models.ghost_variants import GhostVariantModel
 from torchvision import datasets
 
@@ -34,6 +34,7 @@ class TorchRunResult:
     classification_report: str
     confusion_matrix: np.ndarray
     best_model_path: str
+    clinical: ClinicalMetrics
 
 
 @dataclass
@@ -46,6 +47,12 @@ class TorchCVResult:
     ci_precision: tuple[float, float]
     mean_recall: float
     ci_recall: tuple[float, float]
+    mean_sensitivity: float
+    ci_sensitivity: tuple[float, float]
+    mean_specificity: float
+    ci_specificity: tuple[float, float]
+    mean_auc_roc: float
+    ci_auc_roc: tuple[float, float]
 
 
 def _make_scheduler(cfg: GhostRunConfig, optimizer):
@@ -190,23 +197,32 @@ def _train_and_evaluate(
     model.load_state_dict(torch.load(best_model_path))
     model.eval()
 
-    y_all, yhat_all = [], []
+    y_all, yhat_all, yprob_all = [], [], []
     with torch.no_grad():
         for images, labels in bundle.test_loader:
             outputs = torch.sigmoid(model(images.to(device)))
             yhat_all.extend((outputs > 0.5).int().squeeze(1).cpu().numpy())
+            yprob_all.extend(outputs.squeeze(1).cpu().numpy())
             y_all.extend(labels.numpy())
 
-    y_all, yhat_all = np.array(y_all), np.array(yhat_all)
+    y_all, yhat_all, yprob_all = np.array(y_all), np.array(yhat_all), np.array(yprob_all)
     accuracy = (y_all == yhat_all).mean()
     precision = precision_score(y_all, yhat_all, average="weighted")
     recall = recall_score(y_all, yhat_all, average="weighted")
     report = classification_report(y_all, yhat_all, target_names=bundle.dataset.classes)
     conf_mat = confusion_matrix(1 - y_all, 1 - yhat_all)
 
-    print(f"[{cfg.name}] Test Accuracy:  {accuracy:.4f}")
-    print(f"[{cfg.name}] Test Precision: {precision:.4f}")
-    print(f"[{cfg.name}] Test Recall:    {recall:.4f}")
+    # yprob_all is P(label=1) = P(non-ASD) (sigmoid output); flip to P(ASD)
+    # since ASD_LABEL=0 is the positive class for clinical metrics.
+    yprob_positive = 1 - yprob_all if ASD_LABEL == 0 else yprob_all
+    clinical = compute_clinical_metrics(y_all, yhat_all, yprob_positive, positive_label=ASD_LABEL)
+
+    print(f"[{cfg.name}] Test Accuracy:    {accuracy:.4f}")
+    print(f"[{cfg.name}] Test Precision:   {precision:.4f}")
+    print(f"[{cfg.name}] Test Recall:      {recall:.4f}")
+    print(f"[{cfg.name}] Sensitivity(ASD): {clinical.sensitivity:.4f}")
+    print(f"[{cfg.name}] Specificity:      {clinical.specificity:.4f}")
+    print(f"[{cfg.name}] AUC-ROC:          {clinical.auc_roc:.4f}")
     print("\n" + report)
 
     return TorchRunResult(
@@ -218,6 +234,7 @@ def _train_and_evaluate(
         classification_report=report,
         confusion_matrix=conf_mat,
         best_model_path=best_model_path,
+        clinical=clinical,
     )
 
 
@@ -270,10 +287,16 @@ def run_torch_cv_experiment(
     mean_accuracy, ci_accuracy = mean_ci([r.test_accuracy for r in fold_results])
     mean_precision, ci_precision = mean_ci([r.test_precision for r in fold_results])
     mean_recall, ci_recall = mean_ci([r.test_recall for r in fold_results])
+    mean_sensitivity, ci_sensitivity = mean_ci([r.clinical.sensitivity for r in fold_results])
+    mean_specificity, ci_specificity = mean_ci([r.clinical.specificity for r in fold_results])
+    mean_auc_roc, ci_auc_roc = mean_ci([r.clinical.auc_roc for r in fold_results])
 
-    print(f"\n[{cfg.name}] CV accuracy:  {mean_accuracy:.4f} (95% CI {ci_accuracy[0]:.4f}-{ci_accuracy[1]:.4f})")
-    print(f"[{cfg.name}] CV precision: {mean_precision:.4f} (95% CI {ci_precision[0]:.4f}-{ci_precision[1]:.4f})")
-    print(f"[{cfg.name}] CV recall:    {mean_recall:.4f} (95% CI {ci_recall[0]:.4f}-{ci_recall[1]:.4f})")
+    print(f"\n[{cfg.name}] CV accuracy:    {mean_accuracy:.4f} (95% CI {ci_accuracy[0]:.4f}-{ci_accuracy[1]:.4f})")
+    print(f"[{cfg.name}] CV precision:   {mean_precision:.4f} (95% CI {ci_precision[0]:.4f}-{ci_precision[1]:.4f})")
+    print(f"[{cfg.name}] CV recall:      {mean_recall:.4f} (95% CI {ci_recall[0]:.4f}-{ci_recall[1]:.4f})")
+    print(f"[{cfg.name}] CV sensitivity: {mean_sensitivity:.4f} (95% CI {ci_sensitivity[0]:.4f}-{ci_sensitivity[1]:.4f})")
+    print(f"[{cfg.name}] CV specificity: {mean_specificity:.4f} (95% CI {ci_specificity[0]:.4f}-{ci_specificity[1]:.4f})")
+    print(f"[{cfg.name}] CV AUC-ROC:     {mean_auc_roc:.4f} (95% CI {ci_auc_roc[0]:.4f}-{ci_auc_roc[1]:.4f})")
 
     return TorchCVResult(
         config_name=cfg.name,
@@ -284,4 +307,10 @@ def run_torch_cv_experiment(
         ci_precision=ci_precision,
         mean_recall=mean_recall,
         ci_recall=ci_recall,
+        mean_sensitivity=mean_sensitivity,
+        ci_sensitivity=ci_sensitivity,
+        mean_specificity=mean_specificity,
+        ci_specificity=ci_specificity,
+        mean_auc_roc=mean_auc_roc,
+        ci_auc_roc=ci_auc_roc,
     )
