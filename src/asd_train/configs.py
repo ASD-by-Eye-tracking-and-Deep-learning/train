@@ -201,9 +201,7 @@ BEST_PRESETS = {
 class InceptionV3Config:
     name: str = "inceptionv3"
     img_size: int = 256
-    train_batches: int = 12
-    val_batches: int = 3
-    test_batches: int = 2
+    batch_size: int = 32
     tuner_max_trials: int = 30
     tuner_epochs: int = 75
     final_epochs: int = 100

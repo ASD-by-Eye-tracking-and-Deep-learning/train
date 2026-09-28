@@ -69,9 +69,7 @@ def run_inceptionv3_experiment(cfg: InceptionV3Config, dataset_root: str, output
     os.makedirs(output_dir, exist_ok=True)
     best_model_path = os.path.join(output_dir, f"{cfg.name}.h5")
 
-    train, val, test = load_tf_dataset(
-        dataset_path, train_batches=cfg.train_batches, val_batches=cfg.val_batches, test_batches=cfg.test_batches
-    )
+    train, val, test = load_tf_dataset(dataset_path, img_size=cfg.img_size, batch_size=cfg.batch_size)
 
     fmmix_args = FMMixArgs(alpha=cfg.fmmix_alpha, mask_area_mode=1)
     aug_train = train.map(_augment_pre_fmmix1_tf).map(lambda x, y: _apply_fmmix1_tf(x, y, fmmix_args))

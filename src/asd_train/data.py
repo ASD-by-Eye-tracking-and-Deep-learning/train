@@ -1,8 +1,10 @@
 """Dataset loading for both the PyTorch (Ghost/CBAM) and TensorFlow (InceptionV3)
 training paths. Both read the same ML4Autism scanpath images
-(``mahmoud-dataset/Images``, two class subfolders) but split them differently,
-matching what each original notebook actually did — not unified, since
-changing the split would change results.
+(``mahmoud-dataset/Images``, two class subfolders) and now share ONE
+subject-independent split (``split_participant_groups``, T5) — previously
+they used two different, non-subject-independent splits (PyTorch: stratified
+by image; TensorFlow: batch-based take/skip), which is exactly the data
+leakage Reviewer 2 flagged. See ``ASD/.agents/record.md`` (T4/T5/Decision #6).
 """
 from __future__ import annotations
 
@@ -10,9 +12,10 @@ import re
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Sequence
 
 import torch
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import GroupShuffleSplit
 from torchvision import datasets, transforms
 
 _FILENAME_PARTICIPANT_PATTERN = re.compile(r"^(?:TS|TC)\d+_(\d+)\.(?:png|jpg|jpeg)$", re.IGNORECASE)
@@ -20,9 +23,8 @@ _FILENAME_PARTICIPANT_PATTERN = re.compile(r"^(?:TS|TC)\d+_(\d+)\.(?:png|jpg|jpe
 
 def get_participant_groups(dataset: datasets.ImageFolder) -> list[int]:
     """Participant ID per sample, in the same order as ``dataset.samples`` —
-    i.e. aligned with the indices used by ``load_torch_dataset``'s stratified
-    split today, and with what ``GroupShuffleSplit``/``StratifiedGroupKFold``
-    need as their ``groups`` array once the split is made subject-independent.
+    i.e. aligned with the indices ``split_participant_groups`` returns, and
+    with what ``StratifiedGroupKFold`` (T6) needs as its ``groups`` array.
 
     Filenames follow ``Class_ParticipantID`` (e.g. ``TS001_11.png`` ->
     participant 11), per ``mahmoud-dataset/ReadMe.txt``. Verified against
@@ -40,6 +42,41 @@ def get_participant_groups(dataset: datasets.ImageFolder) -> list[int]:
             raise ValueError(f"Filename doesn't match Class_ParticipantID pattern: {path}")
         groups.append(int(match.group(1)))
     return groups
+
+
+def split_participant_groups(
+    groups: Sequence[int],
+    val_size: float = 0.1845,
+    test_size: float = 0.1155,
+    random_state: int = 42,
+) -> tuple[list[int], list[int], list[int]]:
+    """Subject-independent train/val/test split shared by both
+    ``load_torch_dataset`` and ``load_tf_dataset`` (T5) — no participant's
+    images appear in more than one split. Two-stage ``GroupShuffleSplit``,
+    mirroring the *shape* of the old two-stage ``train_test_split`` it
+    replaces (70/30, then the 30% split 0.385/0.615) but grouped by
+    participant instead of stratified by class — ``plan.csv`` T5 specifies
+    ``GroupShuffleSplit`` (not e.g. ``StratifiedGroupKFold``, which T6 adds
+    separately for cross-validation). Defaults reproduce the original
+    ~70/18.45/11.55% ratios.
+
+    Returns indices into ``groups`` (i.e. into ``dataset.samples``).
+    """
+    n = len(groups)
+    temp_size = val_size + test_size
+
+    gss1 = GroupShuffleSplit(n_splits=1, test_size=temp_size, random_state=random_state)
+    train_idx, temp_idx = next(gss1.split(range(n), groups=groups))
+
+    temp_groups = [groups[i] for i in temp_idx]
+    relative_test_size = test_size / temp_size
+    gss2 = GroupShuffleSplit(n_splits=1, test_size=relative_test_size, random_state=random_state)
+    temp_val_local, temp_test_local = next(gss2.split(range(len(temp_idx)), groups=temp_groups))
+
+    val_idx = [temp_idx[i] for i in temp_val_local]
+    test_idx = [temp_idx[i] for i in temp_test_local]
+
+    return list(train_idx), val_idx, test_idx
 
 
 @dataclass
@@ -60,8 +97,10 @@ def load_torch_dataset(
     extra_transform_augmentation: bool = False,
     random_state: int = 42,
 ) -> TorchDataBundle:
-    """70/30 split, then the 30% split 20/10 (test_size=0.385), both
-    stratified by class — matches all 4 Ghost/CBAM notebooks.
+    """Subject-independent split via ``split_participant_groups`` (T5) — no
+    participant's images appear in more than one of train/val/test. Same
+    ~70/18.45/11.55% ratios all 4 Ghost/CBAM notebooks originally used, now
+    grouped by participant instead of stratified by class/image.
 
     ``extra_transform_augmentation``: only ``ghost/mobilenetv4_small`` added
     RandomHorizontalFlip/RandomRotation/ColorJitter directly in the
@@ -81,15 +120,8 @@ def load_torch_dataset(
     transform = transforms.Compose(transform_steps)
 
     dataset = datasets.ImageFolder(dataset_path, transform=transform)
-    targets = [label for _, label in dataset]
-
-    train_idx, temp_idx = train_test_split(
-        range(len(dataset)), test_size=0.3, stratify=targets, random_state=random_state
-    )
-    temp_targets = [targets[i] for i in temp_idx]
-    val_idx, test_idx = train_test_split(
-        temp_idx, test_size=0.385, stratify=temp_targets, random_state=random_state
-    )
+    groups = get_participant_groups(dataset)
+    train_idx, val_idx, test_idx = split_participant_groups(groups, random_state=random_state)
 
     train_sampler = torch.utils.data.SubsetRandomSampler(train_idx)
     val_sampler = torch.utils.data.SubsetRandomSampler(val_idx)
@@ -111,16 +143,50 @@ def class_counts(indices, dataset) -> Counter:
     return Counter(labels)
 
 
-def load_tf_dataset(dataset_path: str, train_batches: int = 12, val_batches: int = 3, test_batches: int = 2):
-    """Batch-based split used by the InceptionV3 notebook: loads the whole
-    directory as a batched dataset, scales to [0,1], then takes/skips whole
-    *batches* (not stratified by class) for train/val/test."""
+def load_tf_dataset(
+    dataset_path: str,
+    img_size: int = 256,
+    batch_size: int = 32,
+    val_size: float = 0.1845,
+    test_size: float = 0.1155,
+    random_state: int = 42,
+):
+    """Subject-independent split via the same ``split_participant_groups``
+    (T5) the PyTorch path uses — replaces the old batch-based take/skip
+    (``image_dataset_from_directory`` + ``.take()``/``.skip()``), which
+    couldn't do arbitrary per-file subsetting and wasn't subject-independent
+    or class-stratified either.
+
+    Enumerates files via ``datasets.ImageFolder`` (no transform — just a
+    manifest) so this shares the *exact* file order ``get_participant_groups``
+    already relies on. With the same ``random_state`` as the PyTorch path,
+    this assigns the identical set of participants to train/val/test as
+    ``load_torch_dataset`` does — genuinely one shared split, not just two
+    similarly-sized ones.
+
+    ``img_size=256`` preserves ``image_dataset_from_directory``'s previous
+    *implicit* default (never explicitly passed before this rewrite).
+    """
     import tensorflow as tf
 
-    data = tf.keras.utils.image_dataset_from_directory(dataset_path)
-    data = data.map(lambda x, y: (x / 255, y))
+    manifest = datasets.ImageFolder(dataset_path)
+    groups = get_participant_groups(manifest)
+    train_idx, val_idx, test_idx = split_participant_groups(
+        groups, val_size=val_size, test_size=test_size, random_state=random_state
+    )
 
-    train = data.take(train_batches)
-    val = data.skip(train_batches).take(val_batches)
-    test = data.skip(train_batches + val_batches).take(test_batches)
-    return train, val, test
+    def _load_and_preprocess(path, label):
+        image = tf.io.read_file(path)
+        image = tf.image.decode_png(image, channels=3)  # drop alpha (source PNGs are RGBA)
+        image = tf.image.resize(image, (img_size, img_size))
+        image = image / 255.0
+        return image, label
+
+    def _make(indices):
+        paths = [manifest.samples[i][0] for i in indices]
+        labels = [manifest.samples[i][1] for i in indices]
+        ds = tf.data.Dataset.from_tensor_slices((paths, labels))
+        ds = ds.map(_load_and_preprocess, num_parallel_calls=tf.data.AUTOTUNE)
+        return ds.batch(batch_size)
+
+    return _make(train_idx), _make(val_idx), _make(test_idx)
