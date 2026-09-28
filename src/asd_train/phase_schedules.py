@@ -66,6 +66,18 @@ def update_training_phase_convnextv2_ghost(model, optimizer, epoch: int, base_lr
     return current_lr
 
 
+def freeze_backbone_always(model, optimizer, epoch: int, base_lr: float) -> None:
+    """T9 ablation baseline: backbone frozen for the entire run (linear
+    probe on frozen ImageNet features), contrasted against the staged
+    unfreeze schedules above to isolate whether fine-tuning the backbone
+    at all contributes over just training the head."""
+    if epoch == 0:
+        for param in model.backbone.parameters():
+            param.requires_grad = False
+        for group in optimizer.param_groups:
+            group["lr"] = base_lr
+
+
 def update_training_phase_convnextv2_ghostcbam(model, optimizer, epoch: int, base_lr: float) -> float:
     """Used by ghost+cbam/convnexttiny_v2 only — different breakpoints and
     multipliers from the ghost-only ConvNeXt schedule (monotonically

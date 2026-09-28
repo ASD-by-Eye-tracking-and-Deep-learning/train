@@ -133,25 +133,35 @@ def _train_and_evaluate(
             images, labels = images.to(device), labels.to(device).float()
 
             optimizer.zero_grad()
-            images_fm, labels_fm = augment_pre_fmmix1(images.clone(), labels.clone())
-            images_fm, computation = fmmix1(fmmix_args, images_fm, labels_fm)
-            _, (p_tar, p_src), (y, y_shuf) = computation
 
-            outputs = model(images_fm).squeeze(1)
-            fmmix_kwargs = {"pos_weight": pos_weight} if cfg.use_pos_weight_in_fmmix_loss else {}
-            loss_tar = F.binary_cross_entropy_with_logits(outputs, y, reduction="none", **fmmix_kwargs)
-            loss_src = F.binary_cross_entropy_with_logits(outputs, y_shuf, reduction="none", **fmmix_kwargs)
-            loss = (p_tar * loss_tar + p_src * loss_src).mean()
+            if cfg.use_fmmix:
+                images_fm, labels_fm = augment_pre_fmmix1(images.clone(), labels.clone())
+                images_fm, computation = fmmix1(fmmix_args, images_fm, labels_fm)
+                _, (p_tar, p_src), (y, y_shuf) = computation
+
+                outputs = model(images_fm).squeeze(1)
+                fmmix_kwargs = {"pos_weight": pos_weight} if cfg.use_pos_weight_in_fmmix_loss else {}
+                loss_tar = F.binary_cross_entropy_with_logits(outputs, y, reduction="none", **fmmix_kwargs)
+                loss_src = F.binary_cross_entropy_with_logits(outputs, y_shuf, reduction="none", **fmmix_kwargs)
+                loss = (p_tar * loss_tar + p_src * loss_src).mean()
+                with torch.no_grad():
+                    preds = (outputs > 0).int()
+                    acc_batch = (
+                        p_tar * (preds == y.int()).float() + p_src * (preds == y_shuf.int()).float()
+                    ).sum().item()
+            else:
+                # T9 ablation: FMMix1 off entirely, plain BCE on the unmixed batch.
+                outputs = model(images).squeeze(1)
+                loss = criterion(outputs, labels)
+                with torch.no_grad():
+                    preds = (outputs > 0).int()
+                    acc_batch = (preds == labels.int()).float().sum().item()
 
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.max_norm)
             optimizer.step()
 
             with torch.no_grad():
-                preds = (outputs > 0).int()
-                acc_batch = (
-                    p_tar * (preds == y.int()).float() + p_src * (preds == y_shuf.int()).float()
-                ).sum().item()
                 train_correct += acc_batch
                 train_loss += loss.item()
                 train_total += labels.size(0)

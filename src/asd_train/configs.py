@@ -11,10 +11,11 @@ and reported test accuracy.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Callable, Literal
 
 from asd_train.phase_schedules import (
+    freeze_backbone_always,
     update_training_phase_convnextv2_ghost,
     update_training_phase_convnextv2_ghostcbam,
     update_training_phase_mobilenetv4,
@@ -50,6 +51,7 @@ class GhostRunConfig:
     use_pos_weight_in_fmmix_loss: bool = False
 
     # Augmentation
+    use_fmmix: bool = True
     fmmix_alpha: float = 0.05
     extra_transform_augmentation: bool = False
 
@@ -194,6 +196,24 @@ BEST_PRESETS = {
     "ghost_convnexttiny": "ghost_convnexttiny_pa1",     # 82.81%
     "ghostcbam_mobilenetv4": "ghostcbam_mobilenetv4_pa2",   # 82.81%
     "ghostcbam_convnexttiny": "ghostcbam_convnexttiny_pa1",  # 78.12% (tied w/ pa3)
+}
+
+
+# T9 ablation grid (record.md Decision #10): each entry flips *exactly one*
+# field off ``ghost_mobilenetv4_pa2`` (the base row) -- unlike the CBAM
+# comparison you get from PRESETS' ghost_* vs ghostcbam_* pairs, which also
+# change lr/max_norm/patience/scheduler/kernel_size at the same time and so
+# can't isolate CBAM's own contribution. Variant (PA1/2/3) is not repeated
+# here since PRESETS already varies it with everything else held fixed.
+_ABLATION_BASE = PRESETS["ghost_mobilenetv4_pa2"]
+
+ABLATION_PRESETS: dict[str, GhostRunConfig] = {
+    "ablation_base": _ABLATION_BASE,
+    "ablation_fmmix_off": replace(_ABLATION_BASE, name="ablation_fmmix_off", use_fmmix=False),
+    "ablation_cbam_isolated": replace(_ABLATION_BASE, name="ablation_cbam_isolated", use_cbam=True),
+    "ablation_frozen_backbone": replace(
+        _ABLATION_BASE, name="ablation_frozen_backbone", phase_schedule=freeze_backbone_always
+    ),
 }
 
 
