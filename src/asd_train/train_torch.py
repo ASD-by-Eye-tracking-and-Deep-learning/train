@@ -124,7 +124,16 @@ def _train_and_evaluate(
     patience_counter = 0
 
     for epoch in range(cfg.num_epochs):
+        lr_before_phase = optimizer.param_groups[0]["lr"]
         cfg.phase_schedule(model, optimizer, epoch, cfg.lr)
+        if optimizer.param_groups[0]["lr"] != lr_before_phase:
+            # A phase transition (backbone unfreeze / LR change) legitimately
+            # changes the loss landscape -- don't let a stall from the
+            # *previous* phase trigger early stopping before this phase gets
+            # `patience` epochs of its own to find a new best. Without this,
+            # logs showed most folds early-stopping mid Phase-2, never
+            # reaching Phase-3 (see record.md Decision #12).
+            patience_counter = 0
         start_time = time.time()
 
         model.train()
