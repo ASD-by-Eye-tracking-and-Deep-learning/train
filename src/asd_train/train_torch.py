@@ -86,6 +86,7 @@ def run_torch_experiment(
         img_size=cfg.img_size,
         batch_size=cfg.batch_size,
         extra_transform_augmentation=cfg.extra_transform_augmentation,
+        grayscale=cfg.grayscale,
     )
 
     return _train_and_evaluate(cfg, bundle, device, best_model_path)
@@ -330,7 +331,7 @@ def run_torch_cv_experiment(
     dataset_path = os.path.join(dataset_root, os.path.basename(cfg.dataset_path.rstrip("/")))
     os.makedirs(output_dir, exist_ok=True)
 
-    transform = build_torch_transform(cfg.img_size, cfg.extra_transform_augmentation)
+    transform = build_torch_transform(cfg.img_size, cfg.extra_transform_augmentation, cfg.grayscale)
     dataset = datasets.ImageFolder(dataset_path, transform=transform)
     splits = make_group_kfold_splits(dataset, k=k, val_size=val_size, random_state=random_state)
 

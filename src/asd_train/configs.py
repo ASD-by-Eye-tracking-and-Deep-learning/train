@@ -54,6 +54,7 @@ class GhostRunConfig:
     use_fmmix: bool = True
     fmmix_alpha: float = 0.05
     extra_transform_augmentation: bool = False
+    grayscale: bool = False
 
     # Architecture
     kernel_size: int = 1
@@ -214,6 +215,19 @@ ABLATION_PRESETS: dict[str, GhostRunConfig] = {
     "ablation_frozen_backbone": replace(
         _ABLATION_BASE, name="ablation_frozen_backbone", phase_schedule=freeze_backbone_always
     ),
+}
+
+# T29 (record.md / plan.csv) — deliberately a SEPARATE dict, not merged into
+# ABLATION_PRESETS above: train/scripts/check_dod_t9.py iterates
+# ABLATION_PRESETS generically (structural "exactly one field differs" check,
+# plus a smoke-train loop over every entry). Adding this here would mean a
+# future re-run of T9's own DoD check silently starts smoke-training T29's
+# grayscale path too, entangling two independently-"Done"/in-progress tasks.
+# Isolates the RGB-vs-grayscale rebuttal (does the motion-encoded color
+# carry more information than a grayscale collapse would?) as exactly one
+# more field flipped off the same ablation_base used by T9/T10.
+T29_EXTRA_PRESETS: dict[str, GhostRunConfig] = {
+    "ablation_grayscale": replace(_ABLATION_BASE, name="ablation_grayscale", grayscale=True),
 }
 
 

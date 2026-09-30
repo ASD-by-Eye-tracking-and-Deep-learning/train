@@ -162,14 +162,27 @@ def bundle_from_indices(
     )
 
 
-def build_torch_transform(img_size: int, extra_transform_augmentation: bool) -> transforms.Compose:
+def build_torch_transform(
+    img_size: int, extra_transform_augmentation: bool, grayscale: bool = False
+) -> transforms.Compose:
     """``extra_transform_augmentation``: only ``ghost/mobilenetv4_small`` added
     RandomHorizontalFlip/RandomRotation/ColorJitter directly in the
     torchvision transform, *on top of* the separate ``augment_pre_fmmix1``
     step applied later in the training loop — the other 3 notebooks didn't.
     This looks like an inconsistency in the original work, not a deliberate
-    choice, but is preserved here rather than silently "fixed"."""
+    choice, but is preserved here rather than silently "fixed".
+
+    ``grayscale`` (T29): collapses the motion-encoded RGB image (R=velocity,
+    G=acceleration, B=jerk) to a single luma channel, replicated back to 3
+    channels so the pretrained ImageNet backbone's first conv layer needs no
+    architecture change — isolates the color-*information* factor without
+    confounding it with an input-shape change. Used only by
+    ``configs.T29_EXTRA_PRESETS``; every existing preset keeps the default
+    ``False`` (RGB unchanged).
+    """
     transform_steps = [transforms.Resize((img_size, img_size))]
+    if grayscale:
+        transform_steps.append(transforms.Grayscale(num_output_channels=3))
     if extra_transform_augmentation:
         transform_steps += [
             transforms.RandomHorizontalFlip(p=0.5),
@@ -185,6 +198,7 @@ def load_torch_dataset(
     img_size: int = 224,
     batch_size: int = 32,
     extra_transform_augmentation: bool = False,
+    grayscale: bool = False,
     random_state: int = 42,
 ) -> TorchDataBundle:
     """Subject-independent split via ``split_participant_groups`` (T5) — no
@@ -192,7 +206,7 @@ def load_torch_dataset(
     ~70/18.45/11.55% ratios all 4 Ghost/CBAM notebooks originally used, now
     grouped by participant instead of stratified by class/image.
     """
-    transform = build_torch_transform(img_size, extra_transform_augmentation)
+    transform = build_torch_transform(img_size, extra_transform_augmentation, grayscale)
     dataset = datasets.ImageFolder(dataset_path, transform=transform)
     groups = get_participant_groups(dataset)
     train_idx, val_idx, test_idx = split_participant_groups(groups, random_state=random_state)
