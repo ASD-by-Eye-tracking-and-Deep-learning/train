@@ -62,19 +62,31 @@ def compute_clinical_metrics(
     ``1 - sigmoid_output`` when ``positive_label=0``).
     """
     negative_label = 1 - positive_label  # binary classification only
-    sensitivity = recall_score(y_true, y_pred, pos_label=positive_label)
-    specificity = recall_score(y_true, y_pred, pos_label=negative_label)
+    sensitivity = recall_score(y_true, y_pred, pos_label=positive_label, zero_division=0)
+    specificity = recall_score(y_true, y_pred, pos_label=negative_label, zero_division=0)
 
     y_true_positive = (y_true == positive_label).astype(int)
-    auc = roc_auc_score(y_true_positive, y_prob_positive)
-    fpr, tpr, _ = roc_curve(y_true_positive, y_prob_positive)
+    # AUC-ROC is mathematically undefined with only one class in y_true (e.g.
+    # LOSO, T8 -- every fold's test set is exactly one participant, who is by
+    # construction all-ASD or all-non-ASD). float('nan') rather than crashing
+    # -- mean_ci naturally propagates NaN into the aggregate, which is the
+    # correct signal that aggregate AUC-ROC isn't meaningful for a protocol
+    # where most folds have no ROC curve to speak of, rather than silently
+    # averaging over a biased subset of folds that happen to be well-defined.
+    try:
+        auc = roc_auc_score(y_true_positive, y_prob_positive)
+        fpr, tpr, _ = roc_curve(y_true_positive, y_prob_positive)
+        fpr, tpr = fpr.tolist(), tpr.tolist()
+    except ValueError:
+        auc = float("nan")
+        fpr, tpr = [], []
 
     return ClinicalMetrics(
         sensitivity=sensitivity,
         specificity=specificity,
         auc_roc=auc,
-        roc_fpr=fpr.tolist(),
-        roc_tpr=tpr.tolist(),
+        roc_fpr=fpr,
+        roc_tpr=tpr,
     )
 
 

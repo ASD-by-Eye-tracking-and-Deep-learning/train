@@ -225,11 +225,22 @@ def _train_and_evaluate(
             y_all.extend(labels.numpy())
 
     y_all, yhat_all, yprob_all = np.array(y_all), np.array(yhat_all), np.array(yprob_all)
+    # Explicit `labels=` throughout: a LOSO fold's test set is exactly one
+    # participant, who is by construction all-ASD or all-non-ASD -- y_all
+    # only ever has one class present. Without `labels=`, sklearn infers the
+    # class set from y_all/yhat_all and classification_report hard-crashes
+    # on the target_names-length mismatch (the crash that surfaced this);
+    # precision/recall/confusion_matrix silently produce a differently-shaped
+    # result instead of erroring, which is just as wrong for downstream code
+    # that assumes a fixed 2-class shape (e.g. check_dod_t7.py's cm[1][...]).
+    all_labels = list(range(len(bundle.dataset.classes)))
     accuracy = (y_all == yhat_all).mean()
-    precision = precision_score(y_all, yhat_all, average="weighted")
-    recall = recall_score(y_all, yhat_all, average="weighted")
-    report = classification_report(y_all, yhat_all, target_names=bundle.dataset.classes)
-    conf_mat = confusion_matrix(1 - y_all, 1 - yhat_all)
+    precision = precision_score(y_all, yhat_all, labels=all_labels, average="weighted", zero_division=0)
+    recall = recall_score(y_all, yhat_all, labels=all_labels, average="weighted", zero_division=0)
+    report = classification_report(
+        y_all, yhat_all, labels=all_labels, target_names=bundle.dataset.classes, zero_division=0
+    )
+    conf_mat = confusion_matrix(1 - y_all, 1 - yhat_all, labels=all_labels)
 
     # yprob_all is P(label=1) = P(non-ASD) (sigmoid output); flip to P(ASD)
     # since ASD_LABEL=0 is the positive class for clinical metrics.
