@@ -97,12 +97,19 @@ def _train_and_evaluate(
     bundle: TorchDataBundle,
     device: torch.device,
     best_model_path: str,
+    fold_label: str | None = None,
 ) -> TorchRunResult:
     """Model build + full training loop (phase schedule, FMMix1, early
     stopping on val_loss) + final test-set evaluation, given an
     already-built ``TorchDataBundle``. Extracted from ``run_torch_experiment``
     (T6) so both the single-split path and ``run_torch_cv_experiment``'s
-    per-fold loop share the exact same training/eval code."""
+    per-fold loop share the exact same training/eval code.
+
+    ``fold_label`` (e.g. a participant ID for LOSO, T8): purely cosmetic,
+    included in the per-fold print lines so `tail -f`'ing a long run shows
+    which fold/participant each accuracy line belongs to live, not just in
+    a post-hoc summary once the whole run finishes."""
+    log_tag = f"[{cfg.name}]" if fold_label is None else f"[{cfg.name} | {fold_label}]"
     model = GhostVariantModel(
         backbone_name=cfg.backbone_name,
         variant=cfg.variant,
@@ -192,7 +199,7 @@ def _train_and_evaluate(
         val_loss /= len(bundle.val_loader)
 
         print(
-            f"[{cfg.name}] Epoch {epoch + 1}/{cfg.num_epochs} | "
+            f"{log_tag} Epoch {epoch + 1}/{cfg.num_epochs} | "
             f"Train: Loss={train_loss:.4f} Acc={train_acc:.4f} | "
             f"Val: Loss={val_loss:.4f} Acc={val_acc:.4f} | Time={time.time() - start_time:.1f}s"
         )
@@ -207,11 +214,11 @@ def _train_and_evaluate(
             best_val_loss = val_loss
             torch.save(model.state_dict(), best_model_path)
             patience_counter = 0
-            print(f"  ✓ {cfg.name} best model saved")
+            print(f"  ✓ {log_tag} best model saved")
         else:
             patience_counter += 1
             if patience_counter >= cfg.patience:
-                print(f"{cfg.name} early stopping at epoch {epoch + 1}")
+                print(f"{log_tag} early stopping at epoch {epoch + 1}")
                 break
 
     model.load_state_dict(torch.load(best_model_path))
@@ -248,12 +255,12 @@ def _train_and_evaluate(
     yprob_positive = 1 - yprob_all if ASD_LABEL == 0 else yprob_all
     clinical = compute_clinical_metrics(y_all, yhat_all, yprob_positive, positive_label=ASD_LABEL)
 
-    print(f"[{cfg.name}] Test Accuracy:    {accuracy:.4f}")
-    print(f"[{cfg.name}] Test Precision:   {precision:.4f}")
-    print(f"[{cfg.name}] Test Recall:      {recall:.4f}")
-    print(f"[{cfg.name}] Sensitivity(ASD): {clinical.sensitivity:.4f}")
-    print(f"[{cfg.name}] Specificity:      {clinical.specificity:.4f}")
-    print(f"[{cfg.name}] AUC-ROC:          {clinical.auc_roc:.4f}")
+    print(f"{log_tag} Test Accuracy:    {accuracy:.4f}")
+    print(f"{log_tag} Test Precision:   {precision:.4f}")
+    print(f"{log_tag} Test Recall:      {recall:.4f}")
+    print(f"{log_tag} Sensitivity(ASD): {clinical.sensitivity:.4f}")
+    print(f"{log_tag} Specificity:      {clinical.specificity:.4f}")
+    print(f"{log_tag} AUC-ROC:          {clinical.auc_roc:.4f}")
     print("\n" + report)
 
     return TorchRunResult(
@@ -309,6 +316,7 @@ def run_torch_cv_experiment(
     val_size: float = 0.2,
     random_state: int = 42,
     device: torch.device | None = None,
+    fold_labels: list[str] | None = None,
 ) -> TorchCVResult:
     """Grouped k-fold CV (T6) — the primary reported protocol (Decision #6/#7,
     record.md): k=5, subject-independent per fold, every participant used as
@@ -342,10 +350,12 @@ def run_torch_cv_experiment(
     for fold_i, (train_idx, val_idx, test_idx) in enumerate(splits):
         if fold_i < len(fold_results):
             continue
-        print(f"\n{'=' * 20} {cfg.name} — fold {fold_i + 1}/{k} {'=' * 20}")
+        label = fold_labels[fold_i] if fold_labels else None
+        header_suffix = f" ({label})" if label else ""
+        print(f"\n{'=' * 20} {cfg.name} — fold {fold_i + 1}/{k}{header_suffix} {'=' * 20}")
         bundle = bundle_from_indices(dataset, cfg.batch_size, train_idx, val_idx, test_idx)
         best_model_path = os.path.join(output_dir, f"{cfg.name}_fold{fold_i}.pth")
-        result = _train_and_evaluate(cfg, bundle, device, best_model_path)
+        result = _train_and_evaluate(cfg, bundle, device, best_model_path, fold_label=label)
         fold_results.append(result)
         _save_cv_progress(cfg.name, fold_results, output_dir)
 

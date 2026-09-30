@@ -37,7 +37,10 @@ splits = make_group_kfold_splits(dataset, k=n_participants, val_size=0.2)
 fold_to_participant = {i: next(iter({groups[j] for j in test_idx})) for i, (_, _, test_idx) in enumerate(splits)}
 
 cfg = PRESETS[CONFIG_NAME]
-result = run_torch_cv_experiment(cfg, dataset_root=DATASET_ROOT, output_dir=OUTPUT_DIR, k=n_participants)
+fold_labels = [f"P{fold_to_participant[i]}" for i in range(n_participants)]
+result = run_torch_cv_experiment(
+    cfg, dataset_root=DATASET_ROOT, output_dir=OUTPUT_DIR, k=n_participants, fold_labels=fold_labels
+)
 
 rows = []
 for i, fold in enumerate(result.fold_results):
