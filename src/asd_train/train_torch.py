@@ -269,6 +269,26 @@ def _save_cv_progress(config_name: str, fold_results: list[TorchRunResult], outp
         json.dump({"config_name": config_name, "folds": [_fold_result_to_json(r) for r in fold_results]}, f, indent=2)
 
 
+def _load_cv_progress(config_name: str, output_dir: str) -> list[TorchRunResult]:
+    """Reconstruct already-completed folds from a prior run's
+    ``{config_name}_cv.json``, if present -- lets ``run_torch_cv_experiment``
+    resume after an interrupted session (e.g. a Colab disconnect) instead of
+    re-training folds that already finished. Returns [] if no progress file
+    exists yet."""
+    path = os.path.join(output_dir, f"{config_name}_cv.json")
+    if not os.path.exists(path):
+        return []
+    with open(path) as f:
+        data = json.load(f)
+    results = []
+    for fold in data["folds"]:
+        fold = dict(fold)
+        fold["confusion_matrix"] = np.array(fold["confusion_matrix"])
+        fold["clinical"] = ClinicalMetrics(**fold["clinical"])
+        results.append(TorchRunResult(**fold))
+    return results
+
+
 def run_torch_cv_experiment(
     cfg: GhostRunConfig,
     dataset_root: str,
@@ -285,6 +305,15 @@ def run_torch_cv_experiment(
     ``run_torch_experiment``'s single hold-out). Results are written to
     ``{output_dir}/{cfg.name}_cv.json`` after every fold, not just at the end,
     so a crash partway through doesn't lose already-finished folds.
+
+    Resumable (Decision #14, record.md): on start, any folds already recorded
+    in ``{output_dir}/{cfg.name}_cv.json`` from a prior run are loaded and
+    skipped rather than re-trained -- re-calling this after an interrupted
+    session (e.g. a Colab disconnect) with the same ``output_dir``/``k``/
+    ``random_state`` continues from the next unfinished fold instead of
+    starting the config over. Relies on ``make_group_kfold_splits`` being
+    deterministic (fixed ``random_state``) so fold N is the same split both
+    times.
     """
     device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
     dataset_path = os.path.join(dataset_root, os.path.basename(cfg.dataset_path.rstrip("/")))
@@ -294,8 +323,13 @@ def run_torch_cv_experiment(
     dataset = datasets.ImageFolder(dataset_path, transform=transform)
     splits = make_group_kfold_splits(dataset, k=k, val_size=val_size, random_state=random_state)
 
-    fold_results: list[TorchRunResult] = []
+    fold_results: list[TorchRunResult] = _load_cv_progress(cfg.name, output_dir)
+    if fold_results:
+        print(f"[{cfg.name}] resuming: {len(fold_results)}/{k} folds already completed, loaded from disk")
+
     for fold_i, (train_idx, val_idx, test_idx) in enumerate(splits):
+        if fold_i < len(fold_results):
+            continue
         print(f"\n{'=' * 20} {cfg.name} — fold {fold_i + 1}/{k} {'=' * 20}")
         bundle = bundle_from_indices(dataset, cfg.batch_size, train_idx, val_idx, test_idx)
         best_model_path = os.path.join(output_dir, f"{cfg.name}_fold{fold_i}.pth")
