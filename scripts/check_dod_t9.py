@@ -30,7 +30,7 @@ K = 2
 for key, cfg in ABLATION_PRESETS.items():
     cheap_cfg = dataclasses.replace(cfg, num_epochs=1, patience=1)
     result = run_torch_cv_experiment(
-        cheap_cfg, dataset_root="../data/mahmoud-dataset", output_dir="/tmp/check_dod_t9", k=K
+        cheap_cfg, dataset_root="../../data/mahmoud-dataset", output_dir="/tmp/check_dod_t9", k=K
     )
     assert len(result.fold_results) == K, f"{key}: expected {K} fold results, got {len(result.fold_results)}"
     assert math.isfinite(result.mean_accuracy), f"{key}: mean_accuracy not finite"

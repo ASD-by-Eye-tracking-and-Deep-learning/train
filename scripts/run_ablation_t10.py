@@ -11,7 +11,7 @@ with T14's later.
 from asd_train.configs import ABLATION_PRESETS
 from asd_train.train_torch import run_torch_cv_experiment
 
-DATASET_ROOT = "../data/mahmoud-dataset"
+DATASET_ROOT = "../../data/mahmoud-dataset"
 OUTPUT_DIR = "artifacts/ablation"
 K = 5
 

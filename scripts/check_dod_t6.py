@@ -45,7 +45,7 @@ print(f"OK: {len(unique_participants)} participants, each used as test exactly o
 
 # --- Full run_torch_cv_experiment smoke test (cheap config overrides) ---
 cfg = dataclasses.replace(PRESETS["ghost_mobilenetv4_pa2"], num_epochs=1, patience=1)
-result = run_torch_cv_experiment(cfg, dataset_root="../data/mahmoud-dataset", output_dir="/tmp/check_dod_t6", k=K)
+result = run_torch_cv_experiment(cfg, dataset_root="../../data/mahmoud-dataset", output_dir="/tmp/check_dod_t6", k=K)
 
 assert len(result.fold_results) == K, f"expected {K} fold results, got {len(result.fold_results)}"
 for metric_name, value, ci in [

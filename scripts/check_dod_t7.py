@@ -14,7 +14,7 @@ from asd_train.configs import PRESETS
 from asd_train.train_torch import run_torch_cv_experiment
 
 cfg = dataclasses.replace(PRESETS["ghost_mobilenetv4_pa2"], num_epochs=1, patience=1)
-result = run_torch_cv_experiment(cfg, dataset_root="../data/mahmoud-dataset", output_dir="/tmp/check_dod_t7", k=2)
+result = run_torch_cv_experiment(cfg, dataset_root="../../data/mahmoud-dataset", output_dir="/tmp/check_dod_t7", k=2)
 
 for r in result.fold_results:
     c = r.clinical

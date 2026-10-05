@@ -28,7 +28,7 @@ BACKBONES = {
 
 # Lives in the meta-repo's data/ (sibling of this train/ repo), not inside
 # train/ itself — see ASD/.agents/record.md (T4) for how it's populated.
-DATASET_PATH_DEFAULT = "../data/mahmoud-dataset/Images"
+DATASET_PATH_DEFAULT = "../../data/mahmoud-dataset/Images"
 
 
 @dataclass

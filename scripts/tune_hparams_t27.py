@@ -17,7 +17,7 @@ from asd_train.data import load_torch_dataset
 from asd_train.train_torch import _train_and_evaluate
 
 BASE = PRESETS["ghost_mobilenetv4_pa2"]
-DATASET_PATH = "../data/mahmoud-dataset/Images"
+DATASET_PATH = "../../data/mahmoud-dataset/Images"
 
 LR_GRID = [5e-6, 1e-5, 2e-5]
 WD_GRID = [0.0, 1e-4, 3e-4]

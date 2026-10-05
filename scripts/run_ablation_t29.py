@@ -15,7 +15,7 @@ plan.csv T29 / the "Does this touch Done tasks" note in the approved plan).
 from asd_train.configs import T29_EXTRA_PRESETS
 from asd_train.train_torch import run_torch_cv_experiment
 
-DATASET_ROOT = "../data/mahmoud-dataset"
+DATASET_ROOT = "../../data/mahmoud-dataset"
 OUTPUT_DIR = "artifacts/ablation"
 SUMMARY_PATH = f"{OUTPUT_DIR}/ablation_summary.md"
 K = 5

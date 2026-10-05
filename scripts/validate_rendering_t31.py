@@ -21,9 +21,9 @@ from PIL import Image
 sys.path.insert(0, "src")
 from asd_train.rendering import load_trial, render_original
 
-RAW_DIR = "../data/mahmoud-dataset/Eye-tracking Output"
-IMAGES_ASD = "../data/mahmoud-dataset/Images/ASD"
-IMAGES_NONASD = "../data/mahmoud-dataset/Images/non-ASD"
+RAW_DIR = "../../data/mahmoud-dataset/Eye-tracking Output"
+IMAGES_ASD = "../../data/mahmoud-dataset/Images/ASD"
+IMAGES_NONASD = "../../data/mahmoud-dataset/Images/non-ASD"
 OUT_DIR = "/tmp/t31_renders"
 
 PARTICIPANTS = {

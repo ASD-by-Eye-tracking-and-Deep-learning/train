@@ -25,7 +25,7 @@ from asd_train.train_torch import run_torch_cv_experiment
 from torchvision import datasets
 
 CONFIG_NAME = "ghost_mobilenetv4_pa2"
-DATASET_ROOT = "../data/mahmoud-dataset"
+DATASET_ROOT = "../../data/mahmoud-dataset"
 OUTPUT_DIR = "artifacts/loso"
 
 dataset = datasets.ImageFolder(DATASET_PATH_DEFAULT)

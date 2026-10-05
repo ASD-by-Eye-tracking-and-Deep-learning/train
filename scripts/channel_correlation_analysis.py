@@ -29,7 +29,7 @@ from PIL import Image
 from scipy.stats import pointbiserialr
 from torchvision import datasets
 
-DATASET_PATH = "../data/mahmoud-dataset/Images"
+DATASET_PATH = "../../data/mahmoud-dataset/Images"
 OUTPUT_PATH = "artifacts/channel_analysis/channel_correlation.md"
 
 
