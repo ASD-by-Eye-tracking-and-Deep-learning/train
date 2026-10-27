@@ -21,6 +21,7 @@ from asd_train.configs import GhostRunConfig
 from asd_train.data import TorchDataBundle, bundle_from_indices, build_torch_transform, load_torch_dataset, make_group_kfold_splits
 from asd_train.metrics import ASD_LABEL, ClinicalMetrics, compute_clinical_metrics, mean_ci
 from asd_train.models.ghost_variants import GhostVariantModel
+from asd_train.models.inceptionv3_torch import InceptionV3TorchModel
 from torchvision import datasets
 
 
@@ -110,17 +111,27 @@ def _train_and_evaluate(
     which fold/participant each accuracy line belongs to live, not just in
     a post-hoc summary once the whole run finishes."""
     log_tag = f"[{cfg.name}]" if fold_label is None else f"[{cfg.name} | {fold_label}]"
-    model = GhostVariantModel(
-        backbone_name=cfg.backbone_name,
-        variant=cfg.variant,
-        use_cbam=cfg.use_cbam,
-        kernel_size=cfg.kernel_size,
-        ghost_ratio=cfg.ghost_ratio,
-        bottleneck_expansion=cfg.bottleneck_expansion,
-        bottleneck_stages=cfg.bottleneck_stages,
-        adapter_reduction=cfg.adapter_reduction,
-        cbam_reduction=cfg.cbam_reduction,
-    ).to(device)
+    if cfg.arch == "inceptionv3":
+        model = InceptionV3TorchModel(
+            backbone_name=cfg.backbone_name,
+            num_dense_layers=cfg.inception_dense_layers,
+            units=cfg.inception_units,
+            dropout=cfg.inception_dropout,
+            activation=cfg.inception_activation,
+            unfreeze_from=cfg.inception_unfreeze_from,
+        ).to(device)
+    else:
+        model = GhostVariantModel(
+            backbone_name=cfg.backbone_name,
+            variant=cfg.variant,
+            use_cbam=cfg.use_cbam,
+            kernel_size=cfg.kernel_size,
+            ghost_ratio=cfg.ghost_ratio,
+            bottleneck_expansion=cfg.bottleneck_expansion,
+            bottleneck_stages=cfg.bottleneck_stages,
+            adapter_reduction=cfg.adapter_reduction,
+            cbam_reduction=cfg.cbam_reduction,
+        ).to(device)
 
     pos_weight = torch.tensor([cfg.pos_weight], device=device)
     criterion = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)

@@ -18,12 +18,16 @@ from asd_train.phase_schedules import (
     freeze_backbone_always,
     update_training_phase_convnextv2_ghost,
     update_training_phase_convnextv2_ghostcbam,
+    update_training_phase_inceptionv3_torch,
     update_training_phase_mobilenetv4,
 )
 
 BACKBONES = {
     "mobilenetv4": "mobilenetv4_conv_small.e2400_r224_in1k",
     "convnextv2": "convnextv2_tiny.fcmae",
+    # T12: the paper's accuracy-focused baseline, run through the same
+    # PyTorch CV protocol instead of the frozen TensorFlow track.
+    "inceptionv3": "inception_v3",
 }
 
 # Lives in the meta-repo's data/ (sibling of this train/ repo), not inside
@@ -34,8 +38,8 @@ DATASET_PATH_DEFAULT = "../../data/mahmoud-dataset/Images"
 @dataclass
 class GhostRunConfig:
     name: str
-    backbone_key: Literal["mobilenetv4", "convnextv2"]
-    variant: Literal["pa1", "pa2", "pa3"]
+    backbone_key: Literal["mobilenetv4", "convnextv2", "inceptionv3"]
+    variant: Literal["pa1", "pa2", "pa3"] | None
     use_cbam: bool
     phase_schedule: Callable
 
@@ -73,6 +77,18 @@ class GhostRunConfig:
     scheduler_eta_min: float = 1e-6
     scheduler_plateau_factor: float = 0.5
     scheduler_plateau_patience: int = 5
+
+    # T12: which model family this preset builds. "ghost" = the 12
+    # Ghost/CBAM configs (variant + use_cbam apply); "inceptionv3" = the
+    # paper's accuracy-focused baseline via models/inceptionv3_torch.py,
+    # where `variant`/`use_cbam` are ignored and the inception_* fields
+    # below stand in for what the Keras-Tuner search would have chosen.
+    arch: Literal["ghost", "inceptionv3"] = "ghost"
+    inception_dense_layers: int = 1
+    inception_units: int = 256
+    inception_dropout: float = 0.3
+    inception_activation: str = "relu"
+    inception_unfreeze_from: str = "Mixed_6a"
 
     dataset_path: str = DATASET_PATH_DEFAULT
 
@@ -244,3 +260,35 @@ class InceptionV3Config:
 
 
 INCEPTIONV3_CONFIG = InceptionV3Config()
+
+# T12: InceptionV3 through the PyTorch CV protocol. Hyperparameters that the
+# original Keras-Tuner searched (dense layers / units / dropout / activation /
+# unfreeze point / lr) are fixed here at the mid-range of the tuner's search
+# space rather than re-searched per fold — 30 trials x 5 folds x 100 epochs is
+# not affordable on a single 8 GB GPU, and the point of this preset is to get
+# the InceptionV3 baseline onto the SAME subject-independent CV scale as the
+# other 12 configs, not to beat a tuner. img_size 256 matches the TF track.
+INCEPTIONV3_TORCH_PRESET = GhostRunConfig(
+    name="inceptionv3_torch",
+    arch="inceptionv3",
+    backbone_key="inceptionv3",
+    variant=None,
+    use_cbam=False,
+    phase_schedule=update_training_phase_inceptionv3_torch,
+    lr=1e-4,
+    weight_decay=1e-4,
+    max_norm=5.0,
+    patience=10,
+    batch_size=32,
+    img_size=256,
+    use_fmmix=True,
+    fmmix_alpha=0.2,
+    scheduler="cosine",
+    inception_dense_layers=1,
+    inception_units=256,
+    inception_dropout=0.3,
+    inception_activation="relu",
+    inception_unfreeze_from="Mixed_6a",
+)
+
+PRESETS_WITH_INCEPTIONV3 = {**PRESETS, INCEPTIONV3_TORCH_PRESET.name: INCEPTIONV3_TORCH_PRESET}

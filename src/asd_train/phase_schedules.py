@@ -98,3 +98,42 @@ def update_training_phase_convnextv2_ghostcbam(model, optimizer, epoch: int, bas
     for group in optimizer.param_groups:
         group["lr"] = current_lr
     return current_lr
+
+
+def _unfreeze_backbone_from(backbone, start_name: str) -> None:
+    """Freeze every top-level child before ``start_name`` and unfreeze from
+    it to the end. timm's InceptionV3 is a flat sequence of children
+    (Conv2d_1a_3x3, ..., Mixed_7c), so ordering is by module registration
+    order — no ``features`` container exists to index into."""
+    children = list(backbone.named_children())
+    names = [n for n, _ in children]
+    if start_name not in names:
+        raise ValueError(f"{start_name!r} not found in backbone children: {names}")
+    start = names.index(start_name)
+    for i, (_, module) in enumerate(children):
+        for param in module.parameters():
+            param.requires_grad = i >= start
+
+
+def update_training_phase_inceptionv3_torch(model, optimizer, epoch: int, base_lr: float) -> float:
+    """T12 InceptionV3-in-PyTorch schedule: linear probe on frozen ImageNet
+    features -> unfreeze from ``model.unfreeze_from`` (Keras
+    block5a/block6a/mixed7 equivalent) -> full fine-tune, LR decreasing at
+    each transition. The original Keras-Tuner track searched this whole
+    space per trial; here the breakpoints are fixed so the run is
+    reproducible across the 5 CV folds."""
+    if epoch < 5:
+        for param in model.backbone.parameters():
+            param.requires_grad = False
+        current_lr = base_lr
+    elif epoch < 20:
+        _unfreeze_backbone_from(model.backbone, model.unfreeze_from)
+        current_lr = base_lr * 0.5
+    else:
+        for param in model.backbone.parameters():
+            param.requires_grad = True
+        current_lr = base_lr * 0.1
+
+    for group in optimizer.param_groups:
+        group["lr"] = current_lr
+    return current_lr
