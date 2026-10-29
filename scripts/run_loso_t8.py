@@ -16,15 +16,22 @@ Output: the usual {config}_cv.json/.pth per fold, plus a per-participant
 breakdown (loso_by_participant.csv) -- this is T8's actual diagnostic value,
 not just an aggregate accuracy number (which grouped 5-fold CV already
 gives, T6).
+
+2026-10-29 (T5 re-run on the local machine): the config is now a CLI argument,
+`--config NAME` (any key of PRESETS_WITH_INCEPTIONV3), default unchanged, so
+LOSO can be re-run on the config T12 picks without editing this file.
 """
+import argparse
 import csv
 
-from asd_train.configs import DATASET_PATH_DEFAULT, PRESETS
+from asd_train.configs import DATASET_PATH_DEFAULT, PRESETS_WITH_INCEPTIONV3
 from asd_train.data import get_participant_groups, make_group_kfold_splits
 from asd_train.train_torch import run_torch_cv_experiment
 from torchvision import datasets
 
-CONFIG_NAME = "ghost_mobilenetv4_pa2"
+parser = argparse.ArgumentParser()
+parser.add_argument("--config", default="ghost_mobilenetv4_pa2")
+CONFIG_NAME = parser.parse_args().config
 DATASET_ROOT = "../../data/mahmoud-dataset"
 OUTPUT_DIR = "artifacts/loso"
 
@@ -36,7 +43,7 @@ print(f"LOSO: {n_participants} participants, config={CONFIG_NAME}")
 splits = make_group_kfold_splits(dataset, k=n_participants, val_size=0.2)
 fold_to_participant = {i: next(iter({groups[j] for j in test_idx})) for i, (_, _, test_idx) in enumerate(splits)}
 
-cfg = PRESETS[CONFIG_NAME]
+cfg = PRESETS_WITH_INCEPTIONV3[CONFIG_NAME]
 fold_labels = [f"P{fold_to_participant[i]}" for i in range(n_participants)]
 result = run_torch_cv_experiment(
     cfg, dataset_root=DATASET_ROOT, output_dir=OUTPUT_DIR, k=n_participants, fold_labels=fold_labels
