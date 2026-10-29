@@ -93,6 +93,32 @@ def run_torch_experiment(
     return _train_and_evaluate(cfg, bundle, device, best_model_path)
 
 
+def build_model(cfg: GhostRunConfig, device: torch.device) -> torch.nn.Module:
+    """Model for ``cfg.arch``, shared by training and by ``explain`` (T13), so
+    a saved ``{name}_fold{i}.pth`` state_dict always loads into the exact
+    architecture it was trained with."""
+    if cfg.arch == "inceptionv3":
+        return InceptionV3TorchModel(
+            backbone_name=cfg.backbone_name,
+            num_dense_layers=cfg.inception_dense_layers,
+            units=cfg.inception_units,
+            dropout=cfg.inception_dropout,
+            activation=cfg.inception_activation,
+            unfreeze_from=cfg.inception_unfreeze_from,
+        ).to(device)
+    return GhostVariantModel(
+        backbone_name=cfg.backbone_name,
+        variant=cfg.variant,
+        use_cbam=cfg.use_cbam,
+        kernel_size=cfg.kernel_size,
+        ghost_ratio=cfg.ghost_ratio,
+        bottleneck_expansion=cfg.bottleneck_expansion,
+        bottleneck_stages=cfg.bottleneck_stages,
+        adapter_reduction=cfg.adapter_reduction,
+        cbam_reduction=cfg.cbam_reduction,
+    ).to(device)
+
+
 def _train_and_evaluate(
     cfg: GhostRunConfig,
     bundle: TorchDataBundle,
@@ -111,27 +137,7 @@ def _train_and_evaluate(
     which fold/participant each accuracy line belongs to live, not just in
     a post-hoc summary once the whole run finishes."""
     log_tag = f"[{cfg.name}]" if fold_label is None else f"[{cfg.name} | {fold_label}]"
-    if cfg.arch == "inceptionv3":
-        model = InceptionV3TorchModel(
-            backbone_name=cfg.backbone_name,
-            num_dense_layers=cfg.inception_dense_layers,
-            units=cfg.inception_units,
-            dropout=cfg.inception_dropout,
-            activation=cfg.inception_activation,
-            unfreeze_from=cfg.inception_unfreeze_from,
-        ).to(device)
-    else:
-        model = GhostVariantModel(
-            backbone_name=cfg.backbone_name,
-            variant=cfg.variant,
-            use_cbam=cfg.use_cbam,
-            kernel_size=cfg.kernel_size,
-            ghost_ratio=cfg.ghost_ratio,
-            bottleneck_expansion=cfg.bottleneck_expansion,
-            bottleneck_stages=cfg.bottleneck_stages,
-            adapter_reduction=cfg.adapter_reduction,
-            cbam_reduction=cfg.cbam_reduction,
-        ).to(device)
+    model = build_model(cfg, device)
 
     pos_weight = torch.tensor([cfg.pos_weight], device=device)
     criterion = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
