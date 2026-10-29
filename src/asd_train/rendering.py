@@ -61,13 +61,22 @@ class GazeSample:
     t_ms: float
 
 
-def load_trial(csv_path: str, trial: str, eye: str = "Right") -> list[GazeSample]:
+def load_trial(
+    csv_path: str, trial: str, eye: str = "Right", participant: int | None = None, start: int = 0
+) -> list[GazeSample]:
     """Load one trial's raw gaze samples from an SMI export CSV
     (``data/mahmoud-dataset/Eye-tracking Output/*.csv``), filtered to a
     single ``Trial`` column value. Drops rows with missing/non-numeric POR
-    coordinates (SMI marks blinks/track-loss as ``-`` or blank)."""
-    df = pd.read_csv(csv_path)
+    coordinates (SMI marks blinks/track-loss as ``-`` or blank).
+
+    ``participant``: the public export (Figshare 20113592) holds several
+    children per file and trial, identified by the ``Participant`` column —
+    without this filter, samples of different children get concatenated.
+    ``start``: offset of the ``MAX_POINTS`` window within the trial."""
+    df = pd.read_csv(csv_path, low_memory=False)
     df = df[df["Trial"] == trial]
+    if participant is not None:
+        df = df[pd.to_numeric(df["Participant"], errors="coerce") == participant]
     x_col, y_col = f"Point of Regard {eye} X [px]", f"Point of Regard {eye} Y [px]"
     df = df[[x_col, y_col, "RecordingTime [ms]"]].apply(pd.to_numeric, errors="coerce")
     df = df.dropna()
@@ -75,7 +84,7 @@ def load_trial(csv_path: str, trial: str, eye: str = "Right") -> list[GazeSample
         GazeSample(x=row[x_col], y=row[y_col], t_ms=row["RecordingTime [ms]"])
         for _, row in df.iterrows()
     ]
-    return samples[:MAX_POINTS]
+    return samples[start : start + MAX_POINTS]
 
 
 def compute_kinematics(
@@ -143,8 +152,11 @@ def render_original(samples: list[GazeSample], output_path: str, time_unit: str 
     ax.set_facecolor("black")
     fig.patch.set_facecolor("black")
     ax.set_xlim(0, RECORDING_SCREEN_W)
+    # Raw SMI y (0 = screen top) plotted on a y-up axis IS the papers'
+    # "vertical mirror". T11 (scripts/validate_rendering_t11_participant.py)
+    # confirmed this against the real images; the earlier invert_yaxis()
+    # undid the mirror and matched no child better than chance.
     ax.set_ylim(0, RECORDING_SCREEN_H)
-    ax.invert_yaxis()  # vertical mirror: SMI y-origin at screen bottom
     ax.axis("off")
 
     n_segments = len(velocity)
@@ -160,6 +172,8 @@ def render_original(samples: list[GazeSample], output_path: str, time_unit: str 
         p1, p2 = samples[i], samples[i + 1]
         ax.plot([p1.x, p2.x], [p1.y, p2.y], color=(r, g, b), linewidth=1)
 
-    fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+    # No subplots_adjust: the real images keep Matplotlib's default axes box
+    # (left=0.125, right=0.9, bottom=0.11, top=0.88) with the axes hidden —
+    # every line pixel of the 547 images lies inside x 80-576, y 58-427 px.
     fig.savefig(output_path, facecolor="black")
     plt.close(fig)
