@@ -52,6 +52,7 @@ CAP = math.sqrt(RECORDING_SCREEN_W**2 + RECORDING_SCREEN_H**2) / 4  # ~409.9
 
 OUTPUT_SIZE = (640, 480)  # (width, height), matches the real dataset images
 MAX_POINTS = 200
+FIXATION_COLOR = (0.0, 1.0, 1.0)  # cyan; see render_original
 
 
 @dataclass
@@ -59,6 +60,7 @@ class GazeSample:
     x: float
     y: float
     t_ms: float
+    category: str = ""  # SMI "Category <eye>": Fixation / Saccade / Blink / ...
 
 
 def load_trial(
@@ -78,10 +80,13 @@ def load_trial(
     if participant is not None:
         df = df[pd.to_numeric(df["Participant"], errors="coerce") == participant]
     x_col, y_col = f"Point of Regard {eye} X [px]", f"Point of Regard {eye} Y [px]"
+    cat_col = f"Category {eye}"
+    category = df[cat_col].astype(str)
     df = df[[x_col, y_col, "RecordingTime [ms]"]].apply(pd.to_numeric, errors="coerce")
+    df["category"] = category
     df = df.dropna()
     samples = [
-        GazeSample(x=row[x_col], y=row[y_col], t_ms=row["RecordingTime [ms]"])
+        GazeSample(x=row[x_col], y=row[y_col], t_ms=row["RecordingTime [ms]"], category=row["category"])
         for _, row in df.iterrows()
     ]
     return samples[start : start + MAX_POINTS]
@@ -165,12 +170,15 @@ def render_original(samples: list[GazeSample], output_path: str, time_unit: str 
         a = acceleration[i - 1] if 0 <= i - 1 < len(acceleration) else 0.0
         j = jerk[i - 2] if 0 <= i - 2 < len(jerk) else 0.0
 
-        r = min(abs(v) / CAP, 1.0)
-        g = min(abs(a) / CAP, 1.0)
-        b = min(abs(j) / CAP, 1.0)
-
         p1, p2 = samples[i], samples[i + 1]
-        ax.plot([p1.x, p2.x], [p1.y, p2.y], color=(r, g, b), linewidth=1)
+        if p1.category == "Fixation" and p2.category == "Fixation":
+            # T11 (scripts/validate_rendering_t11_fixation.py): fixation
+            # transitions in the real images have R≈0, G≈B (Spearman 0.98) —
+            # one fixed cyan, taken from SMI's own label, not from kinematics.
+            color = FIXATION_COLOR
+        else:
+            color = (min(abs(v) / CAP, 1.0), min(abs(a) / CAP, 1.0), min(abs(j) / CAP, 1.0))
+        ax.plot([p1.x, p2.x], [p1.y, p2.y], color=color, linewidth=1)
 
     # No subplots_adjust: the real images keep Matplotlib's default axes box
     # (left=0.125, right=0.9, bottom=0.11, top=0.88) with the axes hidden —
