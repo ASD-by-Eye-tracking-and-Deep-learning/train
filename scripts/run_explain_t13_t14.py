@@ -109,6 +109,12 @@ for name in args.configs:
         rand_model.load_state_dict(model.state_dict())
         randomize_weights(rand_model, seed=fold)
         rand_model.eval()
+        # Grad-CAM needs gradients w.r.t. the feature map only (the input
+        # requires grad, so the path stays differentiable); computing every
+        # parameter's gradient on two ConvNeXt copies ran the 8 GB GPU out of
+        # memory on 2026-10-30.
+        for m in (model, rand_model):
+            m.requires_grad_(False)
 
         imgs, labs, cams, cams_pp, logits = [], [], [], [], []
         for s in range(0, len(test_idx), BATCH):
@@ -147,6 +153,8 @@ for name in args.configs:
         # data, not where the model looks.
         pooled_ctrl.append(region_channel_means(imgs[correct], cams_full[correct], labs[correct], top_frac=1.0).rgb)
         print(f"[{name}] fold {fold}: {len(test_idx)} test images, {int(correct.sum())} correct", flush=True)
+        del model, rand_model
+        torch.cuda.empty_cache()
 
     if not rho["gradcam"]:
         report.append(f"## {name}\n\nNo fold weights found — not evaluated.\n")

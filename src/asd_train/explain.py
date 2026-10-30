@@ -55,6 +55,7 @@ class GradCAM:
         sign = torch.where(logits >= 0, 1.0, -1.0)
         (logits * sign).sum().backward()
         acts, grads = self._acts.detach(), self._grads.detach()
+        self._acts = self._grads = None  # drop graph references between batches
         if self.plus_plus:
             g2, g3 = grads.pow(2), grads.pow(3)
             denom = 2 * g2 + (acts * g3).sum(dim=(2, 3), keepdim=True)
