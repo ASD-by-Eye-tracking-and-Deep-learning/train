@@ -81,13 +81,15 @@ def randomize_weights(model: torch.nn.Module, seed: int = 0) -> None:
 
 
 def spearman_per_image(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """Rank correlation between two batches of maps, one value per image. A
-    constant map (common for a randomized net after ReLU) has no ranking, so
-    its correlation is treated as 0 rather than NaN."""
+    """Rank correlation between two batches of maps, one value per image.
+    NaN when either map is constant (common for a randomized net after ReLU:
+    62% of InceptionV3 maps on 2026-10-30). Counting those as 0 would make
+    the sanity check pass by construction, so callers take the median over
+    the non-NaN values and report how many there were."""
     out = []
     for x, y in zip(a.reshape(len(a), -1), b.reshape(len(b), -1)):
-        rho = stats.spearmanr(x, y).statistic if x.std() > 0 and y.std() > 0 else 0.0
-        out.append(0.0 if np.isnan(rho) else float(rho))
+        rho = stats.spearmanr(x, y).statistic if x.std() > 0 and y.std() > 0 else np.nan
+        out.append(float(rho))
     return np.array(out)
 
 

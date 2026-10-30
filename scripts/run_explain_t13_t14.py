@@ -160,14 +160,27 @@ for name in args.configs:
         report.append(f"## {name}\n\nNo fold weights found — not evaluated.\n")
         continue
 
-    med = {k: float(np.median(v)) for k, v in rho.items()}
-    passed = {k: v < SANITY_MAX_RHO for k, v in med.items()}
-    entry = {"sanity_median_spearman": med, "sanity_pass": passed, "sanity_threshold": SANITY_MAX_RHO}
+    # Constant randomized maps give NaN (see spearman_per_image): the median
+    # is over comparable images only, and when fewer than half are
+    # comparable the test cannot tell anything — INCONCLUSIVE, not PASS.
+    valid = {k: np.array(v)[~np.isnan(v)] for k, v in rho.items()}
+    frac = {k: len(valid[k]) / len(rho[k]) for k in rho}
+    med = {k: float(np.median(valid[k])) if len(valid[k]) else float("nan") for k in rho}
+    verdict = {
+        k: "INCONCLUSIVE" if frac[k] < 0.5 else ("PASS" if med[k] < SANITY_MAX_RHO else "FAIL") for k in rho
+    }
+    passed = {k: verdict[k] == "PASS" for k in rho}
+    entry = {
+        "sanity_median_spearman": med,
+        "sanity_comparable_fraction": frac,
+        "sanity_verdict": verdict,
+        "sanity_threshold": SANITY_MAX_RHO,
+    }
     report.append(
         f"## {name}\n\n### T13 — model randomization test\n\n"
-        "| Method | Median Spearman (trained vs randomized) | Pass (< "
-        f"{SANITY_MAX_RHO}) |\n|---|---|---|\n"
-        + "\n".join(f"| {k} | {med[k]:.3f} | {'PASS' if passed[k] else 'FAIL'} |" for k in med)
+        "| Method | Median Spearman (trained vs randomized) | Comparable images | Verdict (PASS if < "
+        f"{SANITY_MAX_RHO}, INCONCLUSIVE if < 50% comparable) |\n|---|---|---|---|\n"
+        + "\n".join(f"| {k} | {med[k]:.3f} | {frac[k]:.0%} | {verdict[k]} |" for k in rho)
         + "\n"
     )
 
